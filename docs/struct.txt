@@ -1,0 +1,13 @@
+cmd/app/main.go — точка входа
+
+internal/config — конфигурация
+
+internal/models — модели данных
+
+internal/storage — работа с БД
+
+internal/api — HTTP-обработчики
+
+pkg/logger — логгер
+
+docs/swagger — автоматическая документация

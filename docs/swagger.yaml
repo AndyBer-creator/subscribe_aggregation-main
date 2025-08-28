@@ -1,0 +1,198 @@
+basePath: /
+definitions:
+  models.Subscription:
+    properties:
+      end_date:
+        type: string
+      id:
+        type: string
+      price:
+        description: рубли
+        type: integer
+      service_name:
+        type: string
+      start_date:
+        type: string
+      user_id:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API для управления подписками с поддержкой фильтрации и подсчёта стоимости.
+  title: Subscription API
+  version: "1.0"
+paths:
+  /subscriptions:
+    post:
+      consumes:
+      - application/json
+      description: Создает новую подписку с уникальным UUID
+      parameters:
+      - description: Subscription data
+        in: body
+        name: subscription
+        required: true
+        schema:
+          $ref: '#/definitions/models.Subscription'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Subscription'
+        "400":
+          description: Invalid request payload
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Create a new subscription
+      tags:
+      - subscriptions
+  /subscriptions/{id}:
+    delete:
+      parameters:
+      - description: User ID UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Service Name
+        in: query
+        name: service_name
+        type: string
+      responses:
+        "204":
+          description: No content
+        "400":
+          description: Invalid UUID
+          schema:
+            type: string
+        "404":
+          description: Subscription not found
+          schema:
+            type: string
+        "500":
+          description: Server error
+          schema:
+            type: string
+      summary: Delete subscription by ID
+      tags:
+      - subscriptions
+    get:
+      consumes:
+      - application/json
+      description: Получить подписку по её уникальному UUID
+      parameters:
+      - description: Subscription ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Subscription'
+        "400":
+          description: Invalid UUID
+          schema:
+            type: string
+        "404":
+          description: Subscription not found
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Get subscription by ID
+      tags:
+      - subscriptions
+    put:
+      consumes:
+      - application/json
+      description: Update subscription record by UUID with new data
+      parameters:
+      - description: Subscription ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Subscription object
+        in: body
+        name: sub
+        required: true
+        schema:
+          $ref: '#/definitions/models.Subscription'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Subscription'
+        "400":
+          description: Invalid input or UUID
+          schema:
+            type: string
+        "404":
+          description: Subscription not found
+          schema:
+            type: string
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: Update subscription by ID
+      tags:
+      - subscriptions
+  /subscriptions/sum:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID UUID
+        in: query
+        name: user_id
+        type: string
+      - description: Service Name
+        in: query
+        name: service_name
+        type: string
+      - description: Start month-year MM-YYYY
+        in: query
+        name: start_date
+        type: string
+      - description: End month-year MM-YYYY
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+        "400":
+          description: Invalid parameter
+          schema:
+            type: string
+        "500":
+          description: Server error
+          schema:
+            type: string
+      summary: Calculate total subscription cost filtered by user, service and period
+      tags:
+      - subscription
+swagger: "2.0"
