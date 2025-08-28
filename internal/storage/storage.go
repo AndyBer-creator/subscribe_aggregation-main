@@ -3,14 +3,13 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"subscribe_aggregation-main/internal/models"
 	"time"
 
+	"subscribe_aggregation-main/internal/models"
+
+	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq" // postgres driver
-	"github.com/pressly/goose/v3"
 )
 
 type Storage struct {
@@ -22,19 +21,37 @@ func NewStorage(db *sqlx.DB) *Storage {
 }
 
 func (s *Storage) CreateSubscription(ctx context.Context, sub *models.Subscription) error {
-	query := `INSERT INTO subscriptions (id, user_id, service_name, price, start_date, created_at, updated_at)
-              VALUES (:id, :user_id, :service_name, :price, :start_date, NOW(), NOW())`
 	if sub.ID == uuid.Nil {
 		sub.ID = uuid.New()
 	}
-	_, err := s.db.NamedExecContext(ctx, query, sub)
+
+	query := sq.Insert("subscriptions").
+		Columns("id", "user_id", "service_name", "price", "start_date", "created_at", "updated_at").
+		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, sub.StartDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
+		PlaceholderFormat(sq.Dollar)
+
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, sqlStr, args...)
 	return err
 }
 
 func (s *Storage) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*models.Subscription, error) {
 	var sub models.Subscription
-	query := `SELECT * FROM subscriptions WHERE id = $1`
-	err := s.db.GetContext(ctx, &sub, query, id)
+
+	query := sq.Select("*").
+		From("subscriptions").
+		Where(sq.Eq{"id": id}).
+		PlaceholderFormat(sq.Dollar)
+
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.GetContext(ctx, &sub, sqlStr, args...)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -43,57 +60,73 @@ func (s *Storage) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*model
 
 func (s *Storage) ListSubscriptions(ctx context.Context) ([]models.Subscription, error) {
 	var subs []models.Subscription
-	query := `SELECT * FROM subscriptions`
-	err := s.db.SelectContext(ctx, &subs, query)
+	query := sq.Select("*").From("subscriptions").
+		PlaceholderFormat(sq.Dollar)
+
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	err = s.db.SelectContext(ctx, &subs, sqlStr, args...)
 	return subs, err
 }
 
 func (s *Storage) UpdateSubscription(ctx context.Context, sub *models.Subscription) error {
-	query := `UPDATE subscriptions SET 
-        user_id = :user_id, 
-        service_name = :service_name, 
-        price = :price, 
-        start_date = :start_date, 
-        updated_at = NOW()
-        WHERE id = :id`
-	_, err := s.db.NamedExecContext(ctx, query, sub)
+	query := sq.Update("subscriptions").
+		Set("user_id", sub.UserID).
+		Set("service_name", sub.ServiceName).
+		Set("price", sub.Price).
+		Set("start_date", sub.StartDate).
+		Set("updated_at", sq.Expr("NOW()")).
+		Where(sq.Eq{"id": sub.ID}).
+		PlaceholderFormat(sq.Dollar)
+
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, sqlStr, args...)
 	return err
 }
 
 func (s *Storage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM subscriptions WHERE id = $1`
-	_, err := s.db.ExecContext(ctx, query, id)
+	query := sq.Delete("subscriptions").
+		Where(sq.Eq{"id": id}).
+		PlaceholderFormat(sq.Dollar)
+
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, sqlStr, args...)
 	return err
 }
 
 func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, start, end time.Time) (int64, error) {
-	var total int64
-	query := `SELECT COALESCE(SUM(price), 0) FROM subscriptions WHERE start_date >= $1 AND start_date <= $2`
-	args := []interface{}{start, end}
+	query := sq.Select("COALESCE(SUM(price),0)").From("subscriptions").
+		Where(sq.And{
+			sq.GtOrEq{"start_date": start},
+			sq.LtOrEq{"start_date": end},
+		}).
+		PlaceholderFormat(sq.Dollar)
 
 	if userID != "" {
-		query += ` AND user_id = $3`
-		args = append(args, userID)
+		query = query.Where(sq.Eq{"user_id": userID})
 	}
 	if serviceName != "" {
-		if userID == "" {
-			query += ` AND service_name = $3`
-		} else {
-			query += ` AND service_name = $4`
-		}
-		args = append(args, serviceName)
+		query = query.Where(sq.Eq{"service_name": serviceName})
 	}
 
-	err := s.db.GetContext(ctx, &total, query, args...)
-	return total, err
-}
+	sqlStr, args, err := query.ToSql()
+	if err != nil {
+		return 0, err
+	}
 
-func RunMigrations(db *sql.DB, dir string) error {
-	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("set dialect: %w", err)
+	var total int64
+	err = s.db.QueryRowContext(ctx, sqlStr, args...).Scan(&total)
+	if err != nil {
+		return 0, err
 	}
-	if err := goose.Up(db, dir); err != nil {
-		return fmt.Errorf("goose up: %w", err)
-	}
-	return nil
+
+	return total, nil
 }
