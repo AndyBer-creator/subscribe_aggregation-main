@@ -3,11 +3,14 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"subscribe_aggregation-main/internal/models"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq" // postgres driver
+	"github.com/pressly/goose/v3"
 )
 
 type Storage struct {
@@ -83,4 +86,14 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 
 	err := s.db.GetContext(ctx, &total, query, args...)
 	return total, err
+}
+
+func RunMigrations(db *sql.DB, dir string) error {
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("set dialect: %w", err)
+	}
+	if err := goose.Up(db, dir); err != nil {
+		return fmt.Errorf("goose up: %w", err)
+	}
+	return nil
 }

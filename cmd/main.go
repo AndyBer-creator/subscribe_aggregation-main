@@ -11,7 +11,10 @@ import (
 	"subscribe_aggregation-main/pkg/logging"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/lib/pq"
 	httpSwagger "github.com/swaggo/http-swagger"
+
+	"github.com/pressly/goose/v3"
 )
 
 // @title           Subscription API
@@ -22,17 +25,24 @@ import (
 func main() {
 	config.InitDB()
 
-	// Create UUID extension if not exists
+	// Создаем расширение UUID, если оно отсутствует
 	_, err := config.DB.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`)
 	if err != nil {
 		log.Fatalf("Failed to create extension: %v", err)
 	}
 
-	// TODO: Run your migrations here before starting the server,
-	// e.g. using golang-migrate or another migration tool
+	// Устанавливаем dialect для goose
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatalf("Failed to set goose dialect: %v", err)
+	}
 
-	storage := storage.NewStorage(config.DB)
-	handler := api.NewHandler(storage)
+	// Запускаем миграции из папки storage/migrations
+	if err := goose.Up(config.DB.DB, "storage/migrations"); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	store := storage.NewStorage(config.DB)
+	handler := api.NewHandler(store)
 
 	r := chi.NewRouter()
 	r.Use(logging.Middleware)
@@ -47,5 +57,7 @@ func main() {
 	))
 
 	log.Println("Start server :8080")
-	http.ListenAndServe(":8080", r)
+	if err := http.ListenAndServe(":8080", r); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
 }
