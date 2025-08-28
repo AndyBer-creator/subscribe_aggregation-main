@@ -4,7 +4,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE subscriptions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
+<<<<<<< HEAD
     email TEXT NOT NULL,
+=======
+>>>>>>> 78bf63b (updated)
     cost NUMERIC(10,2) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

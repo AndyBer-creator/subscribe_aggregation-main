@@ -24,10 +24,20 @@ func (s *Storage) CreateSubscription(ctx context.Context, sub *models.Subscripti
 	if sub.ID == uuid.Nil {
 		sub.ID = uuid.New()
 	}
+<<<<<<< HEAD
 
 	query := sq.Insert("subscriptions").
 		Columns("id", "user_id", "service_name", "price", "start_date", "created_at", "updated_at").
 		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, sub.StartDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
+=======
+	if sub.StartDate.IsZero() {
+		sub.StartDate = time.Now()
+	}
+
+	query := sq.Insert("subscriptions").
+		Columns("id", "user_id", "service_name", "price", "start_date", "end_date", "created_at", "updated_at").
+		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, sub.StartDate, sub.EndDate, time.Now(), time.Now()).
+>>>>>>> 78bf63b (updated)
 		PlaceholderFormat(sq.Dollar)
 
 	sqlStr, args, err := query.ToSql()
@@ -60,7 +70,13 @@ func (s *Storage) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*model
 
 func (s *Storage) ListSubscriptions(ctx context.Context) ([]models.Subscription, error) {
 	var subs []models.Subscription
+<<<<<<< HEAD
 	query := sq.Select("*").From("subscriptions").
+=======
+
+	query := sq.Select("*").
+		From("subscriptions").
+>>>>>>> 78bf63b (updated)
 		PlaceholderFormat(sq.Dollar)
 
 	sqlStr, args, err := query.ToSql()
@@ -77,7 +93,12 @@ func (s *Storage) UpdateSubscription(ctx context.Context, sub *models.Subscripti
 		Set("service_name", sub.ServiceName).
 		Set("price", sub.Price).
 		Set("start_date", sub.StartDate).
+<<<<<<< HEAD
 		Set("updated_at", sq.Expr("NOW()")).
+=======
+		Set("end_date", sub.EndDate).
+		Set("updated_at", time.Now()).
+>>>>>>> 78bf63b (updated)
 		Where(sq.Eq{"id": sub.ID}).
 		PlaceholderFormat(sq.Dollar)
 
@@ -102,11 +123,19 @@ func (s *Storage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+<<<<<<< HEAD
 func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, start, end time.Time) (int64, error) {
 	query := sq.Select("COALESCE(SUM(price),0)").From("subscriptions").
 		Where(sq.And{
 			sq.GtOrEq{"start_date": start},
 			sq.LtOrEq{"start_date": end},
+=======
+func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, start time.Time) (int64, error) {
+	query := sq.Select("COALESCE(SUM(price), 0)").
+		From("subscriptions").
+		Where(sq.And{
+			sq.GtOrEq{"start_date": start},
+>>>>>>> 78bf63b (updated)
 		}).
 		PlaceholderFormat(sq.Dollar)
 
