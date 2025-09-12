@@ -1,15 +1,36 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "API для управления подписками с поддержкой фильтрации и подсчёта стоимости.",
-        "title": "Subscription API",
-        "contact": {},
-        "version": "1.0"
+        "contact": {}
     },
-    "host": "localhost:8080",
-    "basePath": "/",
     "paths": {
         "/subscriptions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subscriptions"
+                ],
+                "summary": "List all subscriptions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.Subscription"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Создает новую подписку с уникальным UUID",
                 "consumes": [
@@ -168,63 +189,6 @@
                     }
                 }
             },
-            "put": {
-                "description": "Update subscription record by UUID with new data",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "subscriptions"
-                ],
-                "summary": "Update subscription by ID",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Subscription ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Subscription object",
-                        "name": "sub",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.Subscription"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.Subscription"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid input or UUID",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "404": {
-                        "description": "Subscription not found",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            },
             "delete": {
                 "tags": [
                     "subscriptions"
@@ -233,16 +197,10 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "User ID UUID",
+                        "description": "Subscription ID UUID",
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Service Name",
-                        "name": "service_name",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -282,7 +240,6 @@
                     "type": "string"
                 },
                 "price": {
-                    "description": "рубли",
                     "type": "integer"
                 },
                 "service_name": {

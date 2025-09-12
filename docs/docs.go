@@ -16,6 +16,32 @@ const docTemplate = `{
     "basePath": "{{.BasePath}}",
     "paths": {
         "/subscriptions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subscriptions"
+                ],
+                "summary": "List all subscriptions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.Subscription"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Создает новую подписку с уникальным UUID",
                 "consumes": [
@@ -174,63 +200,6 @@ const docTemplate = `{
                     }
                 }
             },
-            "put": {
-                "description": "Update subscription record by UUID with new data",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "subscriptions"
-                ],
-                "summary": "Update subscription by ID",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Subscription ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Subscription object",
-                        "name": "sub",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/models.Subscription"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.Subscription"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid input or UUID",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "404": {
-                        "description": "Subscription not found",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            },
             "delete": {
                 "tags": [
                     "subscriptions"
@@ -239,16 +208,10 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "User ID UUID",
+                        "description": "Subscription ID UUID",
                         "name": "id",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Service Name",
-                        "name": "service_name",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -288,7 +251,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "price": {
-                    "description": "рубли",
                     "type": "integer"
                 },
                 "service_name": {
@@ -307,12 +269,12 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "1.0",
-	Host:             "localhost:8080",
-	BasePath:         "/",
+	Version:          "",
+	Host:             "",
+	BasePath:         "",
 	Schemes:          []string{},
-	Title:            "Subscription API",
-	Description:      "API для управления подписками с поддержкой фильтрации и подсчёта стоимости.",
+	Title:            "",
+	Description:      "",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

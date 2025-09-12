@@ -1,4 +1,3 @@
-basePath: /
 definitions:
   models.Subscription:
     properties:
@@ -7,7 +6,6 @@ definitions:
       id:
         type: string
       price:
-        description: рубли
         type: integer
       service_name:
         type: string
@@ -16,14 +14,27 @@ definitions:
       user_id:
         type: string
     type: object
-host: localhost:8080
 info:
   contact: {}
-  description: API для управления подписками с поддержкой фильтрации и подсчёта стоимости.
-  title: Subscription API
-  version: "1.0"
 paths:
   /subscriptions:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Subscription'
+            type: array
+        "500":
+          description: Internal server error
+          schema:
+            type: string
+      summary: List all subscriptions
+      tags:
+      - subscriptions
     post:
       consumes:
       - application/json
@@ -56,14 +67,10 @@ paths:
   /subscriptions/{id}:
     delete:
       parameters:
-      - description: User ID UUID
+      - description: Subscription ID UUID
         in: path
         name: id
         required: true
-        type: string
-      - description: Service Name
-        in: query
-        name: service_name
         type: string
       responses:
         "204":
@@ -113,44 +120,6 @@ paths:
           schema:
             type: string
       summary: Get subscription by ID
-      tags:
-      - subscriptions
-    put:
-      consumes:
-      - application/json
-      description: Update subscription record by UUID with new data
-      parameters:
-      - description: Subscription ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Subscription object
-        in: body
-        name: sub
-        required: true
-        schema:
-          $ref: '#/definitions/models.Subscription'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Subscription'
-        "400":
-          description: Invalid input or UUID
-          schema:
-            type: string
-        "404":
-          description: Subscription not found
-          schema:
-            type: string
-        "500":
-          description: Internal server error
-          schema:
-            type: string
-      summary: Update subscription by ID
       tags:
       - subscriptions
   /subscriptions/sum:

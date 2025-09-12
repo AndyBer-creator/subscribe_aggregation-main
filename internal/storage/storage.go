@@ -1,8 +1,10 @@
+// Подключение через sqlx
 package storage
 
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"time"
 
 	"subscribe_aggregation-main/internal/models"
@@ -16,6 +18,21 @@ type Storage struct {
 	db *sqlx.DB
 }
 
+type subscriptionPeriod struct {
+	Price     int64     `db:"price"`
+	StartDate time.Time `db:"start_date"`
+	EndDate   time.Time `db:"end_date"`
+}
+
+type StorageInterface interface {
+	CreateSubscription(ctx context.Context, sub *models.Subscription) error
+	GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*models.Subscription, error)
+	ListSubscriptions(ctx context.Context, page, limit int) ([]models.Subscription, error)
+	UpdateSubscription(ctx context.Context, sub *models.Subscription) error
+	DeleteSubscription(ctx context.Context, id uuid.UUID) error
+	SumSubscriptionsCost(ctx context.Context, userID, serviceName string, filterStart, filterEnd time.Time) (int64, error)
+}
+
 func NewStorage(db *sqlx.DB) *Storage {
 	return &Storage{db: db}
 }
@@ -25,15 +42,26 @@ func (s *Storage) CreateSubscription(ctx context.Context, sub *models.Subscripti
 		sub.ID = uuid.New()
 	}
 
+	// Преобразование кастомных дат в time.Time
+	startDate := time.Time(sub.StartDate)
+
+	// Предполагается, что EndDate добавлен в Insert, если нужно, и передаётся аналогично:
+	// var endDate *time.Time
+	// if sub.EndDate != nil {
+	//     ed := time.Time(*sub.EndDate)
+	//     endDate = &ed
+	// }
+
 	query := sq.Insert("subscriptions").
 		Columns("id", "user_id", "service_name", "price", "start_date", "created_at", "updated_at").
-		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, sub.StartDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
+		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, startDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
 		PlaceholderFormat(sq.Dollar)
 
 	sqlStr, args, err := query.ToSql()
 	if err != nil {
 		return err
 	}
+
 	_, err = s.db.ExecContext(ctx, sqlStr, args...)
 	return err
 }
@@ -58,25 +86,44 @@ func (s *Storage) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*model
 	return &sub, err
 }
 
-func (s *Storage) ListSubscriptions(ctx context.Context) ([]models.Subscription, error) {
-	var subs []models.Subscription
-	query := sq.Select("*").From("subscriptions").
+func (s *Storage) ListSubscriptions(ctx context.Context, page, limit int) ([]models.Subscription, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 1000 // или любое разумное число для "без пагинации"
+	}
+	offset := (page - 1) * limit
+
+	query := sq.Select("*").
+		From("subscriptions").
+		Limit(uint64(limit)).
+		Offset(uint64(offset)).
 		PlaceholderFormat(sq.Dollar)
 
 	sqlStr, args, err := query.ToSql()
 	if err != nil {
 		return nil, err
 	}
+
+	var subs []models.Subscription
 	err = s.db.SelectContext(ctx, &subs, sqlStr, args...)
 	return subs, err
 }
-
 func (s *Storage) UpdateSubscription(ctx context.Context, sub *models.Subscription) error {
+	startDate := time.Time(sub.StartDate)
+
+	var endDate *time.Time
+	if sub.EndDate != nil {
+		ed := time.Time(*sub.EndDate)
+		endDate = &ed
+	}
+
 	query := sq.Update("subscriptions").
-		Set("user_id", sub.UserID).
 		Set("service_name", sub.ServiceName).
 		Set("price", sub.Price).
-		Set("start_date", sub.StartDate).
+		Set("start_date", startDate).
+		Set("end_date", endDate).
 		Set("updated_at", sq.Expr("NOW()")).
 		Where(sq.Eq{"id": sub.ID}).
 		PlaceholderFormat(sq.Dollar)
@@ -85,6 +132,7 @@ func (s *Storage) UpdateSubscription(ctx context.Context, sub *models.Subscripti
 	if err != nil {
 		return err
 	}
+
 	_, err = s.db.ExecContext(ctx, sqlStr, args...)
 	return err
 }
@@ -98,15 +146,32 @@ func (s *Storage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, sqlStr, args...)
-	return err
+
+	res, err := s.db.ExecContext(ctx, sqlStr, args...)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows // или кастомная ошибка "подписка не найдена"
+	}
+
+	return nil
 }
 
-func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, start, end time.Time) (int64, error) {
-	query := sq.Select("COALESCE(SUM(price),0)").From("subscriptions").
+// SumSubscriptionsCost считает сумму стоимости подписок с учётом периодов и пересечений
+func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, filterStart, filterEnd time.Time) (int64, error) {
+	var subs []subscriptionPeriod
+
+	query := sq.Select("price", "start_date", "end_date").
+		From("subscriptions").
 		Where(sq.And{
-			sq.GtOrEq{"start_date": start},
-			sq.LtOrEq{"start_date": end},
+			sq.GtOrEq{"end_date": filterStart}, // подписка заканчивается не раньше начала фильтра
+			sq.LtOrEq{"start_date": filterEnd}, // подписка начинается не позже конца фильтра
 		}).
 		PlaceholderFormat(sq.Dollar)
 
@@ -122,11 +187,83 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 		return 0, err
 	}
 
-	var total int64
-	err = s.db.QueryRowContext(ctx, sqlStr, args...).Scan(&total)
+	err = s.db.SelectContext(ctx, &subs, sqlStr, args...)
 	if err != nil {
 		return 0, err
 	}
 
+	total := int64(0)
+
+	merged := mergeIntervals(subs, filterStart, filterEnd)
+
+	for _, sub := range merged {
+		months := monthsBetween(sub.StartDate, sub.EndDate)
+		total += sub.Price * int64(months)
+	}
+
 	return total, nil
+}
+
+// monthsBetween считает количество месяцев между двумя датами включительно
+func monthsBetween(start, end time.Time) int {
+	years := end.Year() - start.Year()
+	months := int(end.Month()) - int(start.Month())
+	return years*12 + months + 1
+}
+
+// mergeIntervals объединяет пересекающиеся и смежные интервалы подписок
+func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time) []subscriptionPeriod {
+	if len(subs) == 0 {
+		return nil
+	}
+
+	// сортируем по дате начала
+	sort.Slice(subs, func(i, j int) bool {
+		return subs[i].StartDate.Before(subs[j].StartDate)
+	})
+
+	var merged []subscriptionPeriod
+	current := subscriptionPeriod{
+		Price:     subs[0].Price,
+		StartDate: maxTime(subs[0].StartDate, filterStart),
+		EndDate:   minTime(subs[0].EndDate, filterEnd),
+	}
+
+	for i := 1; i < len(subs); i++ {
+		start := maxTime(subs[i].StartDate, filterStart)
+		end := minTime(subs[i].EndDate, filterEnd)
+
+		if !start.After(current.EndDate.AddDate(0, 0, 1)) { // учитываем смежные дни как пересечение
+			if end.After(current.EndDate) {
+				current.EndDate = end
+			}
+			// Для цены: можно использовать максимальную или среднюю цену, здесь берем максимум
+			if subs[i].Price > current.Price {
+				current.Price = subs[i].Price
+			}
+		} else {
+			merged = append(merged, current)
+			current = subscriptionPeriod{
+				Price:     subs[i].Price,
+				StartDate: start,
+				EndDate:   end,
+			}
+		}
+	}
+	merged = append(merged, current)
+	return merged
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
