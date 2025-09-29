@@ -16,39 +16,43 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	httpSwagger "github.com/swaggo/http-swagger"
-
-	"github.com/pressly/goose/v3"
 )
 
 func main() {
+	// Создаем корневой контекст с функцией отмены
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	config.InitDB()
 
-	_, err := config.DB.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`)
-	if err != nil {
-		log.Fatalf("Failed to create extension: %v", err)
-	}
-
-	if err := goose.SetDialect("postgres"); err != nil {
-		log.Fatalf("Failed to set goose dialect: %v", err)
-	}
-
-	if err := goose.Up(config.DB.DB, "internal/storage/migrations"); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
-	}
-
+	// Передаем только DB в конструктор, ctx передаем методам явно
 	store := storage.NewStorage(config.DB)
 	handler := api.NewHandler(store)
 
 	r := chi.NewRouter()
+
+	// Добавляем middleware логирования и передачи контекста запроса
 	r.Use(logging.Middleware)
 
 	r.Route("/subscriptions", func(r chi.Router) {
-		r.Get("/", handler.ListSubscriptions)
-		r.Post("/", handler.CreateSubscription)
-		r.Get("/{id}", handler.GetSubscription)
-		r.Put("/{id}", handler.UpdateSubscription)
-		r.Delete("/{id}", handler.DeleteSubscription)
-		r.Get("/sum", handler.SumSubscriptionsCostHandler)
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			handler.ListSubscriptions(w, r.WithContext(ctx))
+		})
+		r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+			handler.CreateSubscription(w, r.WithContext(ctx))
+		})
+		r.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
+			handler.GetSubscription(w, r.WithContext(ctx))
+		})
+		r.Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
+			handler.UpdateSubscription(w, r.WithContext(ctx))
+		})
+		r.Delete("/{id}", func(w http.ResponseWriter, r *http.Request) {
+			handler.DeleteSubscription(w, r.WithContext(ctx))
+		})
+		r.Get("/sum", func(w http.ResponseWriter, r *http.Request) {
+			handler.SumSubscriptionsCostHandler(w, r.WithContext(ctx))
+		})
 	})
 
 	r.Get("/swagger/*", httpSwagger.Handler(
@@ -73,10 +77,12 @@ func main() {
 
 	log.Println("Shutdown Server ...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	cancel() // уведомляем зависимости контекста для безопасного завершения
 
-	if err := srv.Shutdown(ctx); err != nil {
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	if err := srv.Shutdown(ctxShutdown); err != nil {
 		log.Fatalf("Server Shutdown Failed:%+v", err)
 	}
 

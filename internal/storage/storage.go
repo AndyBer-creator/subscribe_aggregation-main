@@ -1,4 +1,3 @@
-// Подключение через sqlx
 package storage
 
 import (
@@ -42,15 +41,7 @@ func (s *Storage) CreateSubscription(ctx context.Context, sub *models.Subscripti
 		sub.ID = uuid.New()
 	}
 
-	// Преобразование кастомных дат в time.Time
 	startDate := time.Time(sub.StartDate)
-
-	// Предполагается, что EndDate добавлен в Insert, если нужно, и передаётся аналогично:
-	// var endDate *time.Time
-	// if sub.EndDate != nil {
-	//     ed := time.Time(*sub.EndDate)
-	//     endDate = &ed
-	// }
 
 	query := sq.Insert("subscriptions").
 		Columns("id", "user_id", "service_name", "price", "start_date", "created_at", "updated_at").
@@ -91,7 +82,7 @@ func (s *Storage) ListSubscriptions(ctx context.Context, page, limit int) ([]mod
 		page = 1
 	}
 	if limit < 1 {
-		limit = 1000 // или любое разумное число для "без пагинации"
+		limit = 1000
 	}
 	offset := (page - 1) * limit
 
@@ -110,6 +101,7 @@ func (s *Storage) ListSubscriptions(ctx context.Context, page, limit int) ([]mod
 	err = s.db.SelectContext(ctx, &subs, sqlStr, args...)
 	return subs, err
 }
+
 func (s *Storage) UpdateSubscription(ctx context.Context, sub *models.Subscription) error {
 	startDate := time.Time(sub.StartDate)
 
@@ -157,21 +149,20 @@ func (s *Storage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	if rowsAffected == 0 {
-		return sql.ErrNoRows // или кастомная ошибка "подписка не найдена"
+		return sql.ErrNoRows
 	}
 
 	return nil
 }
 
-// SumSubscriptionsCost считает сумму стоимости подписок с учётом периодов и пересечений
 func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, filterStart, filterEnd time.Time) (int64, error) {
 	var subs []subscriptionPeriod
 
 	query := sq.Select("price", "start_date", "end_date").
 		From("subscriptions").
 		Where(sq.And{
-			sq.GtOrEq{"end_date": filterStart}, // подписка заканчивается не раньше начала фильтра
-			sq.LtOrEq{"start_date": filterEnd}, // подписка начинается не позже конца фильтра
+			sq.GtOrEq{"end_date": filterStart},
+			sq.LtOrEq{"start_date": filterEnd},
 		}).
 		PlaceholderFormat(sq.Dollar)
 
@@ -193,9 +184,7 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 	}
 
 	total := int64(0)
-
 	merged := mergeIntervals(subs, filterStart, filterEnd)
-
 	for _, sub := range merged {
 		months := monthsBetween(sub.StartDate, sub.EndDate)
 		total += sub.Price * int64(months)
@@ -204,20 +193,17 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 	return total, nil
 }
 
-// monthsBetween считает количество месяцев между двумя датами включительно
 func monthsBetween(start, end time.Time) int {
 	years := end.Year() - start.Year()
 	months := int(end.Month()) - int(start.Month())
 	return years*12 + months + 1
 }
 
-// mergeIntervals объединяет пересекающиеся и смежные интервалы подписок
 func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time) []subscriptionPeriod {
 	if len(subs) == 0 {
 		return nil
 	}
 
-	// сортируем по дате начала
 	sort.Slice(subs, func(i, j int) bool {
 		return subs[i].StartDate.Before(subs[j].StartDate)
 	})
@@ -233,11 +219,10 @@ func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time)
 		start := maxTime(subs[i].StartDate, filterStart)
 		end := minTime(subs[i].EndDate, filterEnd)
 
-		if !start.After(current.EndDate.AddDate(0, 0, 1)) { // учитываем смежные дни как пересечение
+		if !start.After(current.EndDate.AddDate(0, 0, 1)) {
 			if end.After(current.EndDate) {
 				current.EndDate = end
 			}
-			// Для цены: можно использовать максимальную или среднюю цену, здесь берем максимум
 			if subs[i].Price > current.Price {
 				current.Price = subs[i].Price
 			}
