@@ -24,7 +24,7 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - DB_USER=web
-      - DB_PASSWORD=examplepassword
+      - DB_PASSWORD=pass
       - DB_NAME=subscriptions_db
     ports:
       - "8080:8080"
