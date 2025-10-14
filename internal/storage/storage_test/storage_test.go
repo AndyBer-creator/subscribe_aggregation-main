@@ -158,3 +158,70 @@ func TestStorage_GetSubscriptionByID(t *testing.T) {
 
 	}
 }
+func TestStorage_ListSubscriptions(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := storage.NewStorage(db)
+
+	// Создаем фиктивные подписки
+	subs := []models.Subscription{
+		{
+			ID:          uuid.New(),
+			UserID:      uuid.New(),
+			ServiceName: "svc1",
+			Price:       100,
+			StartDate:   models.DataOnly(time.Now()),
+		},
+		{
+			ID:          uuid.New(),
+			UserID:      uuid.New(),
+			ServiceName: "svc2",
+			Price:       200,
+			StartDate:   models.DataOnly(time.Now()),
+		},
+		{
+			ID:          uuid.New(),
+			UserID:      uuid.New(),
+			ServiceName: "svc3",
+			Price:       300,
+			StartDate:   models.DataOnly(time.Now()),
+		},
+	}
+
+	for i := range subs {
+		if err := store.CreateSubscription(context.Background(), &subs[i]); err != nil {
+			t.Fatalf("failed to create subscription: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name    string
+		page    int
+		limit   int
+		wantLen int
+		wantErr bool
+	}{
+		{"page 1, limit 2", 1, 2, 2, false},
+		{"page 2, limit 2", 2, 2, 1, false},
+		{"page 1, limit 5", 1, 5, 3, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.ListSubscriptions(context.Background(), tt.page, tt.limit)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ListSubscriptions() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("ListSubscriptions() length = %v, want %v", len(got), tt.wantLen)
+			}
+			// По желанию проверить ключевые поля элементов, например:
+			for i, sub := range got {
+				if sub.ServiceName != subs[(tt.page-1)*tt.limit+i].ServiceName {
+					t.Errorf("Subscription #%d ServiceName = %v, want %v", i, sub.ServiceName, subs[(tt.page-1)*tt.limit+i].ServiceName)
+				}
+			}
+		})
+	}
+}
