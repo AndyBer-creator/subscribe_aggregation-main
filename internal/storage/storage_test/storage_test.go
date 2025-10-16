@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -223,5 +224,177 @@ func TestStorage_ListSubscriptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+func TestStorage_DeleteSubscription(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := storage.NewStorage(db)
+
+	sub := &models.Subscription{
+		ID:          uuid.New(),
+		UserID:      uuid.New(),
+		ServiceName: "svc1",
+		Price:       100,
+		StartDate:   models.DataOnly(time.Now()),
+	}
+	if err := store.CreateSubscription(context.Background(), sub); err != nil {
+		t.Fatalf("failed to create subscription: %v", err)
+	}
+
+	t.Run("Delete existing subscription", func(t *testing.T) {
+		err := store.DeleteSubscription(context.Background(), sub.ID)
+		if err != nil {
+			t.Fatalf("DeleteSubscription() error = %v", err)
+		}
+		// Проверить что(subscription реально удалена)
+		got, err := store.GetSubscriptionByID(context.Background(), sub.ID)
+		if err != nil && err != sql.ErrNoRows {
+			t.Fatalf("GetSubscriptionByID() error = %v", err)
+		}
+		if got != nil {
+			t.Error("expected subscription to be deleted, but it still exists")
+		}
+	})
+
+	t.Run("Delete non-existing subscription", func(t *testing.T) {
+		err := store.DeleteSubscription(context.Background(), uuid.New())
+		if err != sql.ErrNoRows {
+			t.Errorf("expected sql.ErrNoRows, got %v", err)
+		}
+	})
+}
+
+func TestStorage_SumSubscriptionsCost(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := storage.NewStorage(db)
+
+	userID := uuid.New()
+	service := "svc1"
+
+	// Создаём подписки с разными периодами и ценами
+	start1 := models.DataOnly(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	end1 := models.DataOnly(time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC))
+	start2 := models.DataOnly(time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
+	end2 := models.DataOnly(time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC))
+
+	subs := []models.Subscription{
+		{
+			ID:          uuid.New(),
+			UserID:      userID,
+			ServiceName: service,
+			Price:       100,
+			StartDate:   start1,
+			EndDate:     &end1,
+		},
+		{
+			ID:          uuid.New(),
+			UserID:      userID,
+			ServiceName: service,
+			Price:       150,
+			StartDate:   start2,
+			EndDate:     &end2,
+		},
+	}
+
+	// Создаем записи
+	for i := range subs {
+		err := store.CreateSubscription(context.Background(), &subs[i])
+		if err != nil {
+			t.Fatalf("failed to create subscription: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name        string
+		filterStart time.Time
+		filterEnd   time.Time
+		want        int64
+		wantErr     bool
+	}{
+		{
+			name:        "overlapping subscriptions full period",
+			filterStart: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			filterEnd:   time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
+			want:        700, // Ожидаемое значение с учетом mergeIntervals и monthsBetween
+			wantErr:     false,
+		},
+		{
+			name:        "partial period",
+			filterStart: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			filterEnd:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			want:        100,
+			wantErr:     false,
+		},
+		{
+			name:        "non overlapping period",
+			filterStart: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+			filterEnd:   time.Date(2023, 12, 31, 0, 0, 0, 0, time.UTC),
+			want:        0,
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.SumSubscriptionsCost(context.Background(), userID.String(), service, tt.filterStart, tt.filterEnd)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SumSubscriptionsCost() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("SumSubscriptionsCost() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeIntervals(t *testing.T) {
+	filterStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	filterEnd := time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC)
+
+	endDate1 := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+	endDate2 := time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC)
+
+	subs := []storage.SubscriptionPeriod{
+		{
+			Price:     100,
+			StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			EndDate:   &endDate1,
+		},
+		{
+			Price:     150,
+			StartDate: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+			EndDate:   &endDate2,
+		},
+	}
+
+	merged := storage.MergeIntervals(subs, filterStart, filterEnd)
+
+	if len(merged) != 1 {
+		t.Errorf("Expected 1 merged interval, got %d", len(merged))
+	}
+	if merged[0].Price != 150 {
+		t.Errorf("Expected price 150, got %d", merged[0].Price)
+	}
+	if !merged[0].StartDate.Equal(filterStart) || !merged[0].EndDate.Equal(filterEnd) {
+		t.Errorf("Merged interval dates incorrect: %+v", merged[0])
+	}
+}
+
+func TestMonthsBetween(t *testing.T) {
+	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2024, 3, 14, 0, 0, 0, 0, time.UTC)
+
+	months := storage.MonthsBetween(start, end)
+	if months != 2 {
+		t.Errorf("Expected 2 months, got %d", months)
+	}
+
+	end = time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)
+	months = storage.MonthsBetween(start, end)
+	if months != 3 {
+		t.Errorf("Expected 3 months, got %d", months)
 	}
 }

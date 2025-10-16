@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"log"
 	"sort"
 	"time"
 
@@ -17,10 +18,10 @@ type Storage struct {
 	db *sqlx.DB
 }
 
-type subscriptionPeriod struct {
-	Price     int64     `db:"price"`
-	StartDate time.Time `db:"start_date"`
-	EndDate   time.Time `db:"end_date"`
+type SubscriptionPeriod struct {
+	Price     int64      `db:"price"`
+	StartDate time.Time  `db:"start_date"`
+	EndDate   *time.Time `db:"end_date"`
 }
 
 type StorageInterface interface {
@@ -156,16 +157,18 @@ func (s *Storage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, filterStart, filterEnd time.Time) (int64, error) {
-	var subs []subscriptionPeriod
+	var subs []SubscriptionPeriod
 
 	query := sq.Select("price", "start_date", "end_date").
 		From("subscriptions").
 		Where(sq.And{
-			sq.GtOrEq{"end_date": filterStart},
+			sq.Or{
+				sq.GtOrEq{"end_date": filterStart},
+				sq.Expr("end_date IS NULL"),
+			},
 			sq.LtOrEq{"start_date": filterEnd},
 		}).
 		PlaceholderFormat(sq.Dollar)
-
 	if userID != "" {
 		query = query.Where(sq.Eq{"user_id": userID})
 	}
@@ -177,29 +180,44 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 	if err != nil {
 		return 0, err
 	}
+	log.Printf("SumSubscripionsCost SQL: %s\nARGS:%v|n", sqlStr, args)
 
 	err = s.db.SelectContext(ctx, &subs, sqlStr, args...)
 	if err != nil {
 		return 0, err
 	}
+	log.Printf("Fetched subscriptions: %+v\n", subs)
 
 	total := int64(0)
-	merged := mergeIntervals(subs, filterStart, filterEnd)
+	merged := MergeIntervals(subs, filterStart, filterEnd)
 	for _, sub := range merged {
-		months := monthsBetween(sub.StartDate, sub.EndDate)
+		// Обработка EndDate в случае nil - подставляем filterEnd
+		end := filterEnd
+		if sub.EndDate != nil {
+			end = *sub.EndDate
+		}
+		months := MonthsBetween(sub.StartDate, end)
 		total += sub.Price * int64(months)
 	}
-
 	return total, nil
 }
 
-func monthsBetween(start, end time.Time) int {
-	years := end.Year() - start.Year()
-	months := int(end.Month()) - int(start.Month())
-	return years*12 + months + 1
+func MonthsBetween(start, end time.Time) int {
+	if end.Before(start) {
+		return 0
+	}
+
+	yearDiff := end.Year() - start.Year()
+	monthDiff := int(end.Month()) - int(start.Month())
+	months := yearDiff*12 + monthDiff
+
+	if end.Day() < start.Day() {
+		months--
+	}
+	return months + 1
 }
 
-func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time) []subscriptionPeriod {
+func MergeIntervals(subs []SubscriptionPeriod, filterStart, filterEnd time.Time) []SubscriptionPeriod {
 	if len(subs) == 0 {
 		return nil
 	}
@@ -208,19 +226,22 @@ func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time)
 		return subs[i].StartDate.Before(subs[j].StartDate)
 	})
 
-	var merged []subscriptionPeriod
-	current := subscriptionPeriod{
+	var merged []SubscriptionPeriod
+
+	current := SubscriptionPeriod{
 		Price:     subs[0].Price,
 		StartDate: maxTime(subs[0].StartDate, filterStart),
-		EndDate:   minTime(subs[0].EndDate, filterEnd),
+		EndDate:   minTimePtr(subs[0].EndDate, &filterEnd),
 	}
 
 	for i := 1; i < len(subs); i++ {
 		start := maxTime(subs[i].StartDate, filterStart)
-		end := minTime(subs[i].EndDate, filterEnd)
+		end := minTimePtr(subs[i].EndDate, &filterEnd)
 
-		if !start.After(current.EndDate.AddDate(0, 0, 1)) {
-			if end.After(current.EndDate) {
+		// Проверяем пересечение интервалов (с допуском в 1 день)
+		if !start.After(addOneDay(current.EndDate)) {
+			// Объединяем интервалы
+			if end.After(*current.EndDate) {
 				current.EndDate = end
 			}
 			if subs[i].Price > current.Price {
@@ -228,7 +249,7 @@ func mergeIntervals(subs []subscriptionPeriod, filterStart, filterEnd time.Time)
 			}
 		} else {
 			merged = append(merged, current)
-			current = subscriptionPeriod{
+			current = SubscriptionPeriod{
 				Price:     subs[i].Price,
 				StartDate: start,
 				EndDate:   end,
@@ -246,9 +267,22 @@ func maxTime(a, b time.Time) time.Time {
 	return b
 }
 
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
+func minTimePtr(a, b *time.Time) *time.Time {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.Before(*b) {
 		return a
 	}
 	return b
+}
+
+func addOneDay(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{} // или filterEnd, если лучше
+	}
+	return t.AddDate(0, 0, 1)
 }
