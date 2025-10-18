@@ -43,10 +43,15 @@ func (s *Storage) CreateSubscription(ctx context.Context, sub *models.Subscripti
 	}
 
 	startDate := time.Time(sub.StartDate)
+	var endDate *time.Time
+	if sub.EndDate != nil {
+		ed := time.Time(*sub.EndDate)
+		endDate = &ed
+	}
 
 	query := sq.Insert("subscriptions").
-		Columns("id", "user_id", "service_name", "price", "start_date", "created_at", "updated_at").
-		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, startDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
+		Columns("id", "user_id", "service_name", "price", "start_date", "end_date", "created_at", "updated_at").
+		Values(sub.ID, sub.UserID, sub.ServiceName, sub.Price, startDate, endDate, sq.Expr("NOW()"), sq.Expr("NOW()")).
 		PlaceholderFormat(sq.Dollar)
 
 	sqlStr, args, err := query.ToSql()
@@ -161,13 +166,22 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 
 	query := sq.Select("price", "start_date", "end_date").
 		From("subscriptions").
-		Where(sq.And{
-			sq.Or{
-				sq.GtOrEq{"end_date": filterStart},
-				sq.Expr("end_date IS NULL"),
+		Where(
+			sq.And{
+				sq.Eq{"user_id": userID},           // Пример фильтрации по userID
+				sq.Eq{"service_name": serviceName}, // Пример фильтрации по serviceName
+				sq.Or{
+					sq.And{
+						sq.GtOrEq{"start_date": filterStart},
+						sq.LtOrEq{"end_date": filterEnd},
+					},
+					sq.And{
+						sq.LtOrEq{"start_date": filterEnd},
+						sq.GtOrEq{"end_date": filterStart},
+					},
+				},
 			},
-			sq.LtOrEq{"start_date": filterEnd},
-		}).
+		).
 		PlaceholderFormat(sq.Dollar)
 	if userID != "" {
 		query = query.Where(sq.Eq{"user_id": userID})
@@ -202,6 +216,8 @@ func (s *Storage) SumSubscriptionsCost(ctx context.Context, userID, serviceName 
 	return total, nil
 }
 
+// MonthsBetween считает количество месяцев между датами start и end
+// включая частичные месяцы
 func MonthsBetween(start, end time.Time) int {
 	if end.Before(start) {
 		return 0
@@ -240,7 +256,6 @@ func MergeIntervals(subs []SubscriptionPeriod, filterStart, filterEnd time.Time)
 
 		// Проверяем пересечение интервалов (с допуском в 1 день)
 		if !start.After(addOneDay(current.EndDate)) {
-			// Объединяем интервалы
 			if end.After(*current.EndDate) {
 				current.EndDate = end
 			}
@@ -268,21 +283,15 @@ func maxTime(a, b time.Time) time.Time {
 }
 
 func minTimePtr(a, b *time.Time) *time.Time {
-	if a == nil {
+	if a == nil || (b != nil && b.Before(*a)) {
 		return b
 	}
-	if b == nil {
-		return a
-	}
-	if a.Before(*b) {
-		return a
-	}
-	return b
+	return a
 }
 
 func addOneDay(t *time.Time) time.Time {
 	if t == nil {
-		return time.Time{} // или filterEnd, если лучше
+		return time.Time{}
 	}
 	return t.AddDate(0, 0, 1)
 }

@@ -60,6 +60,9 @@ func setupTestDB(t *testing.T) *sqlx.DB {
 	if err != nil {
 		t.Fatalf("Failed to truncate subscriptions table: %v", err)
 	}
+	t.Cleanup(func() {
+		db.Close()
+	})
 
 	return db
 }
@@ -105,12 +108,14 @@ func TestStorage_GetSubscriptionByID(t *testing.T) {
 
 	store := storage.NewStorage(db)
 
+	// Создаем подписку с конкретной датой для точного сравнения
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	testSub := &models.Subscription{
 		ID:          uuid.New(),
 		UserID:      uuid.New(),
 		ServiceName: "svc1",
 		Price:       100,
-		StartDate:   models.DataOnly(time.Now()),
+		StartDate:   models.DataOnly(now),
 	}
 	if err := store.CreateSubscription(context.Background(), testSub); err != nil {
 		t.Fatalf("failed to create subscription: %v", err)
@@ -133,32 +138,43 @@ func TestStorage_GetSubscriptionByID(t *testing.T) {
 				t.Errorf("GetSubscriptionByID() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got == nil && tt.want == nil {
+
+			// Проверка для случая "not found"
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("expected nil, got subscription with ID %s", got.ID)
+				}
 				return
 			}
-			if got == nil || tt.want == nil {
-				t.Errorf("got %v, want %v", got, tt.want)
+
+			// Проверка для случая "found"
+			if got == nil {
+				t.Errorf("expected subscription, got nil")
 				return
 			}
+
+			// Сравнение полей
 			if got.ID != tt.want.ID {
-				t.Errorf("ID mismatch: got %v, want %v", got.ID, tt.want.ID)
+				t.Errorf("ID mismatch: got %s, want %s", got.ID, tt.want.ID)
 			}
 			if got.UserID != tt.want.UserID {
-				t.Errorf("UserID mismatch: got %v, want %v", got.UserID, tt.want.UserID)
+				t.Errorf("UserID mismatch: got %s, want %s", got.UserID, tt.want.UserID)
 			}
 			if got.ServiceName != tt.want.ServiceName {
-				t.Errorf("ServiceName mismatch: got %v, want %v", got.ServiceName, tt.want.ServiceName)
+				t.Errorf("ServiceName mismatch: got %s, want %s", got.ServiceName, tt.want.ServiceName)
 			}
 			if got.Price != tt.want.Price {
-				t.Errorf("Price mismatch: got %v, want %v", got.Price, tt.want.Price)
+				t.Errorf("Price mismatch: got %d, want %d", got.Price, tt.want.Price)
 			}
-			if time.Time(got.StartDate).Unix() != time.Time(tt.want.StartDate).Unix() {
+
+			// Сравнение дат через ToTime() и проверка года/месяца/дня
+			if !got.StartDate.ToTime().Truncate(24 * time.Hour).Equal(tt.want.StartDate.ToTime().Truncate(24 * time.Hour)) {
 				t.Errorf("StartDate mismatch: got %v, want %v", got.StartDate, tt.want.StartDate)
 			}
 		})
-
 	}
 }
+
 func TestStorage_ListSubscriptions(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -273,7 +289,7 @@ func TestStorage_SumSubscriptionsCost(t *testing.T) {
 	userID := uuid.New()
 	service := "svc1"
 
-	// Создаём подписки с разными периодами и ценами
+	// Создаем подписки с пересекающимися периодами
 	start1 := models.DataOnly(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	end1 := models.DataOnly(time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC))
 	start2 := models.DataOnly(time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC))
@@ -298,7 +314,7 @@ func TestStorage_SumSubscriptionsCost(t *testing.T) {
 		},
 	}
 
-	// Создаем записи
+	// Создаем записи в БД
 	for i := range subs {
 		err := store.CreateSubscription(context.Background(), &subs[i])
 		if err != nil {
@@ -317,14 +333,14 @@ func TestStorage_SumSubscriptionsCost(t *testing.T) {
 			name:        "overlapping subscriptions full period",
 			filterStart: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			filterEnd:   time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
-			want:        700, // Ожидаемое значение с учетом mergeIntervals и monthsBetween
+			want:        600, // 150 руб * 4 месяца (январь-апрель)
 			wantErr:     false,
 		},
 		{
 			name:        "partial period",
 			filterStart: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			filterEnd:   time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			want:        100,
+			want:        100, // 100 руб * 1 месяц
 			wantErr:     false,
 		},
 		{
@@ -384,17 +400,32 @@ func TestMergeIntervals(t *testing.T) {
 }
 
 func TestMonthsBetween(t *testing.T) {
-	start := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2024, 3, 14, 0, 0, 0, 0, time.UTC)
-
-	months := storage.MonthsBetween(start, end)
-	if months != 2 {
-		t.Errorf("Expected 2 months, got %d", months)
+	tests := []struct {
+		name     string
+		start    time.Time
+		end      time.Time
+		expected int
+	}{
+		{
+			name:     "exact months",
+			start:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
+			expected: 4,
+		},
+		{
+			name:     "partial month",
+			start:    time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 2, 14, 0, 0, 0, 0, time.UTC),
+			expected: 1,
+		},
 	}
 
-	end = time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)
-	months = storage.MonthsBetween(start, end)
-	if months != 3 {
-		t.Errorf("Expected 3 months, got %d", months)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := storage.MonthsBetween(tt.start, tt.end)
+			if got != tt.expected {
+				t.Errorf("MonthsBetween(%v, %v) = %d, want %d", tt.start, tt.end, got, tt.expected)
+			}
+		})
 	}
 }

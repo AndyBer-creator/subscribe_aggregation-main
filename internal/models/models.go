@@ -25,6 +25,9 @@ func (d DataOnly) MarshalJSON() ([]byte, error) {
 	t := time.Time(d)
 	return []byte(`"` + t.Format("2006-01-02") + `"`), nil
 }
+func (d DataOnly) ToTime() time.Time {
+	return time.Time(d).Truncate(time.Second)
+}
 
 type Subscription struct {
 	ID          uuid.UUID `json:"id" db:"id"`
