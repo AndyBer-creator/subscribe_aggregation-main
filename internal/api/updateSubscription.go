@@ -47,7 +47,7 @@ func (h *Handler) UpdateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	sub.ID = id
 
-	err = h.storage.UpdateSubscription(r.Context(), &sub)
+	err = h.Storage.UpdateSubscription(r.Context(), &sub)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			logger.Info("UpdateSubscription: subscription not found", slog.String("subscription_id", id.String()))

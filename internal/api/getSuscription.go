@@ -33,7 +33,7 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub, err := h.storage.GetSubscriptionByID(r.Context(), id)
+	sub, err := h.Storage.GetSubscriptionByID(r.Context(), id)
 	if err != nil {
 		logger.Error("GetSubscription: internal error", slog.String("error", err.Error()))
 		http.Error(w, "internal server error", http.StatusInternalServerError)

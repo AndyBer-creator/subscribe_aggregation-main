@@ -2,10 +2,8 @@ package api
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"subscribe_aggregation-main/internal/models"
-	"subscribe_aggregation-main/pkg/logging"
 
 	"github.com/google/uuid"
 )
@@ -22,24 +20,27 @@ import (
 // @Failure      500  {string}  string "Internal server error"
 // @Router       /subscriptions [post]
 func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
-	logger := logging.GetLogger()
 	var sub models.Subscription
-
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil {
-		//logger.Error("CreateSubscription: invalid request payload", slog.String("error", err.Error()))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
+	// Генерация ID
 	sub.ID = uuid.New()
 
-	if err := h.storage.CreateSubscription(r.Context(), &sub); err != nil {
-		logger.Error("CreateSubscription: failed to create subscription", slog.String("error", err.Error()))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Валидация обязательных полей
+	if sub.ServiceName == "" || sub.Price <= 0 || sub.UserID == uuid.Nil {
+		http.Error(w, "missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info("CreateSubscription: subscription created", slog.String("subscription_id", sub.ID.String()))
+	// Сохранение подписки
+	if err := h.Storage.CreateSubscription(r.Context(), &sub); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(sub)
 }

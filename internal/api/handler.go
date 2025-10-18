@@ -11,12 +11,12 @@ import (
 )
 
 type Handler struct {
-	storage storage.StorageInterface
+	Storage storage.StorageInterface
 }
 
 // NewHandler создаёт новый экземпляр Handler с интерфейсом StorageInterface (обратите внимание — без указателя)
 func NewHandler(store storage.StorageInterface) *Handler {
-	return &Handler{storage: store}
+	return &Handler{Storage: store}
 }
 
 // LoggingMiddleware пример middleware для логирования запросов

@@ -54,7 +54,7 @@ func (h *Handler) SumSubscriptionsCostHandler(w http.ResponseWriter, r *http.Req
 		end = time.Now()
 	}
 
-	total, err := h.storage.SumSubscriptionsCost(r.Context(), userID, serviceName, start, end)
+	total, err := h.Storage.SumSubscriptionsCost(r.Context(), userID, serviceName, start, end)
 	if err != nil {
 		logger.Error("SumSubscriptionsCostHandler: failed to sum subscriptions cost", slog.String("error", err.Error()))
 		http.Error(w, err.Error(), http.StatusInternalServerError)

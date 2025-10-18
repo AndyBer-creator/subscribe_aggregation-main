@@ -28,7 +28,7 @@ func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 		limit = 10
 	}
 
-	subs, err := h.storage.ListSubscriptions(r.Context(), page, limit)
+	subs, err := h.Storage.ListSubscriptions(r.Context(), page, limit)
 	if err != nil {
 		logger.Error("ListSubscriptions: failed to list subscriptions", slog.String("error", err.Error()))
 		http.Error(w, "internal server error", http.StatusInternalServerError)

@@ -31,7 +31,7 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.storage.DeleteSubscription(r.Context(), id)
+	err = h.Storage.DeleteSubscription(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			logger.Info("DeleteSubscription: subscription not found", slog.String("subscription_id", id.String()))
