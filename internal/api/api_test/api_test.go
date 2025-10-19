@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,42 +19,51 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
+// MockStorage - мок для тестирования хранилища подписок.
 type MockStorage struct {
 	mock.Mock
 }
 
+// CreateSubscription - мок метода создания подписки.
 func (m *MockStorage) CreateSubscription(ctx context.Context, sub *models.Subscription) error {
 	args := m.Called(ctx, sub)
 	return args.Error(0)
 }
 
+// GetSubscriptionByID - мок метода получения подписки по ID.
 func (m *MockStorage) GetSubscriptionByID(ctx context.Context, id uuid.UUID) (*models.Subscription, error) {
 	args := m.Called(ctx, id)
 	return args.Get(0).(*models.Subscription), args.Error(1)
 }
 
+// ListSubscriptions - мок метода получения списка подписок.
 func (m *MockStorage) ListSubscriptions(ctx context.Context, page, limit int) ([]models.Subscription, error) {
 	args := m.Called(ctx, page, limit)
 	return args.Get(0).([]models.Subscription), args.Error(1)
 }
 
+// UpdateSubscription - мок метода обновления подписки.
 func (m *MockStorage) UpdateSubscription(ctx context.Context, sub *models.Subscription) error {
 	args := m.Called(ctx, sub)
 	return args.Error(0)
 }
 
+// DeleteSubscription - мок метода удаления подписки.
 func (m *MockStorage) DeleteSubscription(ctx context.Context, id uuid.UUID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 
+// SumSubscriptionsCost - мок метода подсчёта стоимости подписок.
 func (m *MockStorage) SumSubscriptionsCost(ctx context.Context, userID, serviceName string, filterStart, filterEnd time.Time) (int64, error) {
 	args := m.Called(ctx, userID, serviceName, filterStart, filterEnd)
 	return args.Get(0).(int64), args.Error(1)
 }
 
+// TestCreateSubscription - тестирование эндпоинта создания подписки.
 func TestCreateSubscription(t *testing.T) {
 	mockStore := new(MockStorage)
 	handler := &api.Handler{
@@ -99,7 +110,6 @@ func TestCreateSubscription(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Настройка мока только для успешного случая и storage_error
 			if tt.mockResp == nil && tt.name != "invalid_json" {
 				mockStore.On("CreateSubscription", mock.Anything, mock.MatchedBy(func(sub *models.Subscription) bool {
 					return sub.ServiceName == tt.requestBody["service_name"].(string) &&
@@ -107,7 +117,6 @@ func TestCreateSubscription(t *testing.T) {
 						sub.UserID.String() == tt.requestBody["user_id"].(string)
 				})).Return(tt.mockResp).Once()
 			} else if tt.name == "storage_error" {
-				// Для storage_error также ожидаем вызов CreateSubscription
 				mockStore.On("CreateSubscription", mock.Anything, mock.MatchedBy(func(sub *models.Subscription) bool {
 					return sub.ServiceName == tt.requestBody["service_name"].(string) &&
 						sub.Price == int(tt.requestBody["price"].(float64)) &&
@@ -136,6 +145,7 @@ func TestCreateSubscription(t *testing.T) {
 	}
 }
 
+// TestDeleteSubscription - тестирование эндпоинта удаления подписки.
 func TestDeleteSubscription(t *testing.T) {
 	mockStore := new(MockStorage)
 	handler := &api.Handler{
@@ -187,6 +197,7 @@ func TestDeleteSubscription(t *testing.T) {
 	}
 }
 
+// TestGetSubscription - тестирование эндпоинта получения подписки по ID.
 func TestGetSubscription(t *testing.T) {
 	mockStore := new(MockStorage)
 	handler := &api.Handler{
@@ -231,13 +242,11 @@ func TestGetSubscription(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Настройка мока
 			if tt.mockResp != nil || tt.mockErr != nil {
 				mockID, _ := uuid.Parse(tt.id)
 				mockStore.On("GetSubscriptionByID", mock.Anything, mockID).Return(tt.mockResp, tt.mockErr).Once()
 			}
 
-			// Создание запроса и установка параметров маршрута
 			req, _ := http.NewRequest("GET", "/subscriptions/"+tt.id, nil)
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("id", tt.id)
@@ -246,11 +255,9 @@ func TestGetSubscription(t *testing.T) {
 			rr := httptest.NewRecorder()
 			handler.GetSubscription(rr, req)
 
-			// Проверка результата
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 			mockStore.AssertExpectations(t)
 
-			// Дополнительная проверка для успешного случая
 			if tt.expectedStatus == http.StatusOK {
 				var response models.Subscription
 				err := json.Unmarshal(rr.Body.Bytes(), &response)
@@ -261,4 +268,72 @@ func TestGetSubscription(t *testing.T) {
 			}
 		})
 	}
+}
+
+// MockLogger - мок логгера для тестирования middleware.
+type MockLogger struct {
+	logs []string
+}
+
+func (m *MockLogger) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (m *MockLogger) Handle(ctx context.Context, r slog.Record) error {
+	// Собираем сообщение из Record вручную
+	var attrs []string
+	r.Attrs(func(attr slog.Attr) bool {
+		attrs = append(attrs, attr.Key+"="+attr.Value.String())
+		return true
+	})
+
+	msg := r.Level.String() + " " + r.Message + " [" + strings.Join(attrs, " ") + "]"
+	m.logs = append(m.logs, msg)
+	return nil
+}
+
+func (m *MockLogger) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return m
+}
+
+func (m *MockLogger) WithGroup(name string) slog.Handler {
+	return m
+}
+
+// type mockResponseWriter struct {
+// 	io.Writer
+// 	statusCode int // <- Поле для хранения статус кода
+// }
+
+// func (m *mockResponseWriter) Header() http.Header { return http.Header{} }
+
+// func (m *mockResponseWriter) WriteHeader(code int) {
+// 	m.statusCode = code // <- Обновляем статус код
+// }
+
+// func (m *mockResponseWriter) Write(p []byte) (int, error) {
+// 	return m.Writer.Write(p)
+// }
+
+// TestLoggingMiddleware - тестирование middleware логирования запросов.
+func TestLoggingMiddleware(t *testing.T) {
+	logger := &MockLogger{}
+	slogLogger := slog.New(logger)
+	api.SetLogger(slogLogger)
+
+	middleware := api.LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("test"))
+	}))
+
+	req, err := http.NewRequest("GET", "/test", nil)
+	require.NoError(t, err)
+
+	rr := httptest.NewRecorder()
+
+	middleware.ServeHTTP(rr, req)
+
+	require.GreaterOrEqual(t, len(logger.logs), 2)
+	assert.Contains(t, logger.logs[0], "INFO Request started")
+	assert.Contains(t, logger.logs[1], "INFO Request completed")
 }

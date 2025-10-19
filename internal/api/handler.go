@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"subscribe_aggregation-main/internal/storage"
-	"subscribe_aggregation-main/pkg/logging"
 )
 
 type Handler struct {
@@ -19,12 +18,22 @@ func NewHandler(store storage.StorageInterface) *Handler {
 	return &Handler{Storage: store}
 }
 
+var globalLogger *slog.Logger = slog.Default()
+
+func SetLogger(l *slog.Logger) {
+	globalLogger = l
+}
+
+func GetLogger() *slog.Logger {
+	return globalLogger
+}
+
 // LoggingMiddleware пример middleware для логирования запросов
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger := logging.GetLogger()
+		logger := GetLogger()
 		start := time.Now()
-		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: 200}
+		lrw := &LoggingResponseWriter{ResponseWriter: w, StatusCode: 200}
 
 		logger.Info("Request started",
 			slog.String("method", r.Method),
@@ -40,18 +49,18 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			slog.String("method", r.Method),
 			slog.String("url", r.URL.String()),
 			slog.String("remote_addr", r.RemoteAddr),
-			slog.Int("status", lrw.statusCode),
+			slog.Int("status", lrw.StatusCode),
 			slog.Int64("duration_ms", duration),
 		)
 	})
 }
 
-type loggingResponseWriter struct {
+type LoggingResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	StatusCode int
 }
 
-func (lrw *loggingResponseWriter) WriteHeader(code int) {
-	lrw.statusCode = code
+func (lrw *LoggingResponseWriter) WriteHeader(code int) {
+	lrw.StatusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
 }
