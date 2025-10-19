@@ -300,21 +300,6 @@ func (m *MockLogger) WithGroup(name string) slog.Handler {
 	return m
 }
 
-// type mockResponseWriter struct {
-// 	io.Writer
-// 	statusCode int // <- Поле для хранения статус кода
-// }
-
-// func (m *mockResponseWriter) Header() http.Header { return http.Header{} }
-
-// func (m *mockResponseWriter) WriteHeader(code int) {
-// 	m.statusCode = code // <- Обновляем статус код
-// }
-
-// func (m *mockResponseWriter) Write(p []byte) (int, error) {
-// 	return m.Writer.Write(p)
-// }
-
 // TestLoggingMiddleware - тестирование middleware логирования запросов.
 func TestLoggingMiddleware(t *testing.T) {
 	logger := &MockLogger{}
