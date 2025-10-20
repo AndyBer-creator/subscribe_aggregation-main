@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -321,4 +322,328 @@ func TestLoggingMiddleware(t *testing.T) {
 	require.GreaterOrEqual(t, len(logger.logs), 2)
 	assert.Contains(t, logger.logs[0], "INFO Request started")
 	assert.Contains(t, logger.logs[1], "INFO Request completed")
+}
+
+// TestListSubscriptions - тестирование эндпоинта получения списка подписок.
+func TestListSubscriptions(t *testing.T) {
+	mockStore := new(MockStorage)
+	handler := &api.Handler{
+		Storage: mockStore,
+	}
+
+	tests := []struct {
+		name           string
+		queryParams    map[string]string
+		mockResp       []models.Subscription
+		mockErr        error
+		expectedStatus int
+		expectedBody   []models.Subscription
+	}{
+		{
+			name: "success",
+			queryParams: map[string]string{
+				"page":  "1",
+				"limit": "2",
+			},
+			mockResp: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+			mockErr:        nil,
+			expectedStatus: http.StatusOK,
+			expectedBody: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+		},
+		{
+			name: "invalid_page",
+			queryParams: map[string]string{
+				"page":  "invalid",
+				"limit": "2",
+			},
+			mockResp: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+			mockErr:        nil,
+			expectedStatus: http.StatusOK,
+			expectedBody: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+		},
+		{
+			name: "invalid_limit",
+			queryParams: map[string]string{
+				"page":  "1",
+				"limit": "invalid",
+			},
+			mockResp: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+			mockErr:        nil,
+			expectedStatus: http.StatusOK,
+			expectedBody: []models.Subscription{
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), ServiceName: "svc1", Price: 100},
+				{ID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"), ServiceName: "svc2", Price: 200},
+			},
+		},
+		{
+			name: "storage_error",
+			queryParams: map[string]string{
+				"page":  "1",
+				"limit": "2",
+			},
+			mockResp:       nil,
+			mockErr:        assert.AnError,
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Настраиваем мок - не ограничиваем количество вызовов для гибкости
+			mockStore.On("ListSubscriptions", mock.Anything, mock.Anything, mock.Anything).
+				Return(tt.mockResp, tt.mockErr)
+
+			req := httptest.NewRequest("GET", "/subscriptions", nil)
+			q := req.URL.Query()
+			for k, v := range tt.queryParams {
+				q.Add(k, v)
+			}
+			req.URL.RawQuery = q.Encode()
+
+			rr := httptest.NewRecorder()
+			handler.ListSubscriptions(rr, req)
+
+			assert.Equal(t, tt.expectedStatus, rr.Code)
+
+			if tt.expectedStatus == http.StatusOK {
+				var response []models.Subscription
+				err := json.Unmarshal(rr.Body.Bytes(), &response)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedBody, response)
+			} else if tt.expectedStatus >= 400 {
+				// При ошибках можно проверить тело ответа с сообщением
+				assert.Contains(t, rr.Body.String(), "internal server error")
+			}
+
+			mockStore.AssertExpectations(t)
+			mockStore.ExpectedCalls = nil
+			mockStore.Calls = nil
+		})
+	}
+}
+
+func TestSumSubscriptionsCostHandler(t *testing.T) {
+	mockStore := new(MockStorage)
+	handler := &api.Handler{
+		Storage: mockStore,
+	}
+
+	tests := []struct {
+		name           string
+		queryString    string
+		sumReturn      int64
+		sumErr         error
+		wantStatusCode int
+		wantBody       string
+		setupMock      func()
+	}{
+		{
+			name:           "Valid request returns sum",
+			queryString:    "?user_id=123&service_name=svc1&start_date=01-2024&end_date=04-2024",
+			sumReturn:      700,
+			sumErr:         nil,
+			wantStatusCode: http.StatusOK,
+			wantBody:       `{"total_price":700}`,
+			setupMock: func() {
+				mockStore.On("SumSubscriptionsCost", mock.Anything, "123", "svc1", mock.Anything, mock.Anything).
+					Return(int64(700), nil).Once()
+			},
+		},
+		{
+			name:           "Invalid start_date format",
+			queryString:    "?start_date=2024-01",
+			wantStatusCode: http.StatusBadRequest,
+			wantBody:       "invalid start_date format, expected MM-YYYY\n",
+			setupMock: func() {
+				// мок не вызывается в этом случае, ничего не нужно
+			},
+		},
+		{
+			name:           "Storage error",
+			queryString:    "?user_id=123",
+			sumReturn:      0,
+			sumErr:         errors.New("DB failure"),
+			wantStatusCode: http.StatusInternalServerError,
+			wantBody:       "DB failure\n",
+			setupMock: func() {
+				mockStore.On("SumSubscriptionsCost", mock.Anything, "123", "", mock.Anything, mock.Anything).
+					Return(int64(0), errors.New("DB failure")).Once()
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockStore.ExpectedCalls = nil // сброс предыдущих ожиданий
+			tc.setupMock()
+
+			req := httptest.NewRequest("GET", "/subscriptions/sum"+tc.queryString, nil)
+			w := httptest.NewRecorder()
+
+			handler.SumSubscriptionsCostHandler(w, req)
+			res := w.Result()
+
+			if res.StatusCode != tc.wantStatusCode {
+				t.Errorf("expected status %d, got %d", tc.wantStatusCode, res.StatusCode)
+			}
+
+			bodyBytes := w.Body.Bytes()
+			if string(bodyBytes) != tc.wantBody {
+				if strings.HasPrefix(tc.wantBody, "{") {
+					var wantMap, gotMap map[string]int64
+					_ = json.Unmarshal([]byte(tc.wantBody), &wantMap)
+					_ = json.Unmarshal(bodyBytes, &gotMap)
+					if !equalMaps(wantMap, gotMap) {
+						t.Errorf("expected body %s, got %s", tc.wantBody, string(bodyBytes))
+					}
+				} else {
+					t.Errorf("expected body %s, got %s", tc.wantBody, string(bodyBytes))
+				}
+			}
+
+			mockStore.AssertExpectations(t)
+		})
+	}
+}
+
+func equalMaps(a, b map[string]int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func TestUpdateSubscriptionHandler(t *testing.T) {
+	mockStore := new(MockStorage)
+	handler := &api.Handler{
+		Storage: mockStore,
+	}
+
+	validUUID := uuid.New()
+	validSub := models.Subscription{
+		ID:          validUUID,
+		UserID:      uuid.New(),
+		ServiceName: "svc1",
+		Price:       123,
+		StartDate:   models.DataOnly(time.Now()),
+	}
+	validSubJSON, _ := json.Marshal(validSub)
+
+	tests := []struct {
+		name           string
+		method         string
+		url            string
+		body           string
+		setupMock      func()
+		wantStatusCode int
+		wantBody       string
+	}{
+		{
+			name:   "Valid update",
+			method: http.MethodPut,
+			url:    "/subscriptions/" + validUUID.String(),
+			body:   string(validSubJSON),
+			setupMock: func() {
+				mockStore.On("UpdateSubscription", mock.Anything, mock.MatchedBy(func(sub *models.Subscription) bool {
+					return sub.ID == validUUID
+				})).Return(nil).Once()
+			},
+			wantStatusCode: http.StatusOK,
+			wantBody:       string(validSubJSON) + "\n",
+		},
+		{
+			name:           "Invalid UUID",
+			method:         http.MethodPut,
+			url:            "/subscriptions/invalid-uuid",
+			body:           string(validSubJSON),
+			setupMock:      func() {}, // мок не вызывается
+			wantStatusCode: http.StatusBadRequest,
+			wantBody:       "invalid UUID\n",
+		},
+		{
+			name:           "Invalid JSON body",
+			method:         http.MethodPut,
+			url:            "/subscriptions/" + validUUID.String(),
+			body:           `{"invalid_json":`,
+			setupMock:      func() {}, // мок не вызывается
+			wantStatusCode: http.StatusBadRequest,
+			wantBody:       "unexpected end of JSON input\n",
+		},
+		{
+			name:   "Storage returns sql.ErrNoRows",
+			method: http.MethodPut,
+			url:    "/subscriptions/" + validUUID.String(),
+			body:   string(validSubJSON),
+			setupMock: func() {
+				mockStore.On("UpdateSubscription", mock.Anything, mock.Anything).Return(sql.ErrNoRows).Once()
+			},
+			wantStatusCode: http.StatusNotFound,
+			wantBody:       "subscription not found\n",
+		},
+		{
+			name:   "Storage returns error",
+			method: http.MethodPut,
+			url:    "/subscriptions/" + validUUID.String(),
+			body:   string(validSubJSON),
+			setupMock: func() {
+				mockStore.On("UpdateSubscription", mock.Anything, mock.Anything).Return(errors.New("DB error")).Once()
+			},
+			wantStatusCode: http.StatusInternalServerError,
+			wantBody:       "DB error\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockStore.ExpectedCalls = nil
+			tc.setupMock()
+
+			req := httptest.NewRequest(tc.method, tc.url, strings.NewReader(tc.body))
+			w := httptest.NewRecorder()
+
+			r := chi.NewRouter()
+			r.Put("/subscriptions/{id}", handler.UpdateSubscription)
+			r.ServeHTTP(w, req)
+
+			res := w.Result()
+			bodyBytes := w.Body.Bytes()
+
+			if res.StatusCode != tc.wantStatusCode {
+				t.Errorf("expected status %d, got %d", tc.wantStatusCode, res.StatusCode)
+			}
+
+			switch tc.name {
+			case "Invalid JSON body":
+				if !strings.Contains(string(bodyBytes), "unexpected EOF") {
+					t.Errorf("expected body to contain unexpected EOF, got %s", string(bodyBytes))
+				}
+			default:
+				if string(bodyBytes) != tc.wantBody {
+					t.Errorf("expected body %q, got %q", tc.wantBody, string(bodyBytes))
+				}
+			}
+
+			mockStore.AssertExpectations(t)
+		})
+	}
 }
