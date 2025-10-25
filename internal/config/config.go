@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -52,12 +53,13 @@ func LoadConfig() *Config {
 			serverPort = "8080"
 		}
 
-		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-			os.Getenv("POSTGRES_HOST"),
+		dsn := fmt.Sprintf(
+			"postgres://%s:%s@%s:%s/%s?sslmode=%s",
 			os.Getenv("POSTGRES_USER"),
 			os.Getenv("POSTGRES_PASSWORD"),
-			os.Getenv("POSTGRES_DB"),
+			os.Getenv("POSTGRES_HOST"),
 			os.Getenv("POSTGRES_PORT"),
+			os.Getenv("POSTGRES_DB"),
 			sslMode,
 		)
 
@@ -71,15 +73,15 @@ func LoadConfig() *Config {
 }
 
 // InitDB подключается к базе и устанавливает DB
-func InitDB() {
-	cfg := LoadConfig()
-	db, err := sqlx.Connect("postgres", cfg.PostgresDSN)
-	if err != nil {
-		log.Fatalf("failed to connect to db: %v", err)
+func InitDB() error {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return errors.New("DATABASE_URL not set")
 	}
-	// Проверим соединение
-	if err := db.Ping(); err != nil {
-		log.Fatalf("failed to ping db: %v", err)
+	db, err := sqlx.Connect("postgres", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to connect to db: %w", err)
 	}
 	DB = db
+	return nil
 }

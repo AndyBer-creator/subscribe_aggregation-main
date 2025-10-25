@@ -1,0 +1,1 @@
+{"time":"2025-10-23T20:09:53.092149599+04:00","level":"ERROR","source":{"function":"subscribe_aggregation-main/internal/api.(*Handler).ListSubscriptions","file":"/home/andrew/go/src/subscribe_aggregation-main/internal/api/listSubscriptions.go","line":33},"msg":"ListSubscriptions: failed to list subscriptions","error":"pq: relation \"subscriptions\" does not exist"}
